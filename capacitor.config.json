@@ -1,0 +1,13 @@
+{
+  "appId": "com.bohuvuj.singercms",
+  "appName": "Collectra CMS",
+  "webDir": "www",
+  "server": {
+    "url": "https://singercms.bohuvuj.com/dashboard",
+    "allowNavigation": ["singercms.bohuvuj.com", "*.supabase.co"],
+    "cleartext": false
+  },
+  "plugins": {
+    "Keyboard": { "resize": "native", "resizeOnFullScreen": true }
+  }
+}

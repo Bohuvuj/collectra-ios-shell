@@ -1,0 +1,87 @@
+# Unsigned iPhone beta of Collectra CMS, built on a GitHub Mac (free for a
+# public repository) and published as the latest release. Run by hand, or on a
+# push to main.
+name: iPhone beta
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-beta
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Version
+        id: v
+        run: |
+          VERSION=$(curl -fsS https://singercms.bohuvuj.com/downloads/android.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Add the iPhone project
+        run: |
+          mkdir -p www && echo '<!doctype html><title>Collectra CMS</title>' > www/index.html
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Icon
+        run: |
+          ICONSET=ios/App/App/Assets.xcassets/AppIcon.appiconset
+          sips -s format png -z 1024 1024 assets/icon.png --out "$ICONSET/AppIcon-512@2x.png" >/dev/null
+          ls "$ICONSET"
+
+      - name: App details and permission texts
+        run: |
+          PLIST=ios/App/App/Info.plist
+          set_key() { /usr/libexec/PlistBuddy -c "Set :$1 $2" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$PLIST"; }
+          set_key CFBundleDisplayName "Collectra CMS"
+          set_key CFBundleShortVersionString "${{ steps.v.outputs.version }}"
+          set_key CFBundleVersion "${{ github.run_number }}"
+          set_key NSFaceIDUsageDescription "Unlock Collectra CMS with Face ID."
+          set_key NSLocationWhenInUseUsageDescription "Your location is saved with a field visit as proof of the visit."
+          set_key NSCameraUsageDescription "Scan a receipt's QR code or take a photo for a report."
+          set_key NSPhotoLibraryUsageDescription "Attach a photo to a problem report."
+
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" | tail -n 40
+
+      - name: Package the .ipa
+        run: |
+          WORK="$RUNNER_TEMP/ipa"
+          mkdir -p "$WORK/Payload"
+          cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" "$WORK/Payload/"
+          (cd "$WORK" && zip -qry collectra-cms-ios-beta.ipa Payload)
+          mv "$WORK/collectra-cms-ios-beta.ipa" .
+          shasum -a 256 collectra-cms-ios-beta.ipa
+
+      - name: Publish as the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="beta-${{ github.run_number }}"
+          gh release create "$TAG" collectra-cms-ios-beta.ipa \
+            --title "iPhone beta ${{ steps.v.outputs.version }} (build ${{ github.run_number }})" \
+            --notes "Unsigned beta. Install with Sideloadly or AltStore using your own Apple ID; reinstall every 7 days. Opens https://singercms.bohuvuj.com." \
+            --latest
